@@ -1,0 +1,252 @@
+import maya.cmds as cmds
+import re
+
+class AdvancedRiggingToolUI:
+    def __init__(self, lang='ja'):
+        self.window_name = "advancedRiggingToolWindow"
+        
+        self.ui_text = {
+            'ja': {
+                'window_title': "リギング便利ツール v7.1 (エラー修正版)",
+                'mirror_frame': "ミラー機能",
+                'search_name': "検索する名前:",
+                'get_button': "取得",
+                'replace_name': "置換後の名前:",
+                'preset_menu': "プリセット読込",
+                'preset_select': "--- 選択 ---",
+                'select_root_button': "接頭辞でルートを一括選択",
+                'mirror_plane': "ミラー平面:",
+                'mirror_plane_yz': "YZ (X反転)",
+                'mirror_plane_xz': "XZ (Y反転)",
+                'mirror_plane_xy': "XY (Z反転)",
+                'orient_check': "オリエントを反転",
+                'mirror_button': "選択したジョイントをミラー実行",
+                'seq_rename_frame': "階層リネーム機能",
+                'seq_rename_desc': "名前の末尾が数字のジョイントを1つ選択後、\nボタンを押してください。",
+                'seq_rename_button': "選択ジョイント以下を連番リネーム",
+                'stock_rename_frame': "ストック＆リネーム機能",
+                'load_button': "選択オブジェクトの読込",
+                'clear_button': "リストをクリア",
+                'apply_button': "リストの名前を適用",
+                'search_string': "検索する文字列:",
+                'replace_string': "置換後の文字列:",
+                'replace_in_list_button': "リスト内を置換",
+                'add_prefix_label': "追加する接頭辞:",
+                'add_suffix_label': "追加する接尾辞:",
+                'add_fix_button': "接頭辞・接尾辞を追加",
+                'lang_menu': "言語 (Language)"
+            },
+            'en': {
+                'window_title': "Rigging Utility Tool v7.1 (Bug Fix)",
+                'mirror_frame': "Mirror Function",
+                'search_name': "Search For:",
+                'get_button': "Get",
+                'replace_name': "Replace With:",
+                'preset_menu': "Presets",
+                'preset_select': "--- Select ---",
+                'select_root_button': "Select Roots by Prefix",
+                'mirror_plane': "Mirror Across:",
+                'mirror_plane_yz': "YZ (across X)",
+                'mirror_plane_xz': "XZ (across Y)",
+                'mirror_plane_xy': "XY (across Z)",
+                'orient_check': "Mirror Behavior",
+                'mirror_button': "Execute Mirror on Selected",
+                'seq_rename_frame': "Sequential Rename",
+                'seq_rename_desc': "Select one joint ending with a number,\nthen press the button.",
+                'seq_rename_button': "Rename Hierarchy Sequentially",
+                'stock_rename_frame': "Stock & Rename Function",
+                'load_button': "Load Selected Objects",
+                'clear_button': "Clear List",
+                'apply_button': "Apply Names from List",
+                'search_string': "Search String:",
+                'replace_string': "Replace String:",
+                'replace_in_list_button': "Replace in List",
+                'add_prefix_label': "Add Prefix:",
+                'add_suffix_label': "Add Suffix:",
+                'add_fix_button': "Add Prefix/Suffix",
+                'lang_menu': "Language"
+            }
+        }
+        self.lang = lang
+        self.txt = self.ui_text[self.lang]
+
+        self.stocked_objects = []
+        self.opt_var_keys = {'search': 'batchMirror_searchFor', 'replace': 'batchMirror_replaceWith', 'plane': 'batchMirror_mirrorPlane', 'behavior': 'batchMirror_mirrorBehavior'}
+
+        if cmds.window(self.window_name, exists=True):
+            cmds.deleteUI(self.window_name)
+            
+        self.window = cmds.window(self.window_name, title=self.txt['window_title'], widthHeight=(400, 720), sizeable=True)
+        
+        self.main_layout = cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
+        
+        # ▼▼▼ UIの名前を正しく変数に格納 ▼▼▼
+        self.lang_menu = cmds.optionMenu(label=self.txt['lang_menu'], changeCommand=self.change_language)
+        cmds.menuItem(label="日本語 (Japanese)")
+        cmds.menuItem(label="English")
+        cmds.optionMenu(self.lang_menu, edit=True, select=(1 if lang == 'ja' else 2))
+        
+        # --- 1. ミラー機能 ---
+        mirror_frame = cmds.frameLayout(label=self.txt['mirror_frame'], collapsable=False, backgroundColor=(0.25, 0.35, 0.45), marginWidth=5, marginHeight=5)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=5, parent=mirror_frame)
+        saved_search = cmds.optionVar(q=self.opt_var_keys['search']) if cmds.optionVar(exists=self.opt_var_keys['search']) else 'L_'
+        self.search_field = cmds.textFieldButtonGrp(label=self.txt['search_name'], text=saved_search, buttonLabel=self.txt['get_button'], buttonCommand=self.get_prefix_from_selection, columnWidth3=(100, 180, 60))
+        saved_replace = cmds.optionVar(q=self.opt_var_keys['replace']) if cmds.optionVar(exists=self.opt_var_keys['replace']) else 'R_'
+        self.replace_field = cmds.textFieldGrp(label=self.txt['replace_name'], text=saved_replace, columnWidth2=(100, 240))
+        self.preset_menu = cmds.optionMenu(label=self.txt['preset_menu'], changeCommand=self.apply_preset)
+        cmds.menuItem(label=self.txt['preset_select']); cmds.menuItem(label="L_  ->  R_"); cmds.menuItem(label="R_  ->  L_"); cmds.menuItem(label="l_  ->  r_"); cmds.menuItem(label="r_  ->  l_"); cmds.menuItem(label="Left_  ->  Right_"); cmds.menuItem(label="Right_  ->  Left_")
+        cmds.button(label=self.txt['select_root_button'], command=self.select_roots_by_prefix, backgroundColor=(0.4, 0.7, 0.5))
+        saved_plane = cmds.optionVar(q=self.opt_var_keys['plane']) if cmds.optionVar(exists=self.opt_var_keys['plane']) else 1
+        self.plane_radio = cmds.radioButtonGrp(label=self.txt['mirror_plane'], labelArray3=[self.txt['mirror_plane_yz'], self.txt['mirror_plane_xz'], self.txt['mirror_plane_xy']], numberOfRadioButtons=3, select=saved_plane, columnWidth4=(100, 100, 100, 100))
+        saved_behavior = cmds.optionVar(q=self.opt_var_keys['behavior']) if cmds.optionVar(exists=self.opt_var_keys['behavior']) else True
+        self.behavior_check = cmds.checkBox(label=self.txt['orient_check'], value=saved_behavior, align="left")
+        cmds.button(label=self.txt['mirror_button'], height=30, command=self.apply_mirror, backgroundColor=(0.4, 0.6, 0.9))
+        cmds.setParent('..'); cmds.setParent('..')
+
+        # --- 2. 階層リネーム機能 ---
+        rename_frame = cmds.frameLayout(label=self.txt['seq_rename_frame'], collapsable=False, backgroundColor=(0.45, 0.35, 0.25), marginWidth=5, marginHeight=5)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=5, parent=rename_frame)
+        cmds.text(label=self.txt['seq_rename_desc'], align='center', height=30)
+        cmds.button(label=self.txt['seq_rename_button'], height=40, command=self.sequential_rename, backgroundColor=(0.8, 0.6, 0.3))
+        cmds.setParent('..'); cmds.setParent('..')
+        
+        # --- 3. ストック＆リネーム機能 ---
+        stock_frame = cmds.frameLayout(label=self.txt['stock_rename_frame'], collapsable=False, backgroundColor=(0.3, 0.45, 0.3), marginWidth=5, marginHeight=5)
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=5, parent=stock_frame)
+        cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, columnAttach2=("both", "both"))
+        cmds.button(label=self.txt['load_button'], command=self.load_selection_to_stock)
+        cmds.button(label=self.txt['clear_button'], command=self.clear_stock_list, backgroundColor=(0.7, 0.4, 0.4))
+        cmds.setParent('..')
+        self.stock_list_field = cmds.scrollField(wordWrap=False, height=100, font="fixedWidthFont")
+        cmds.button(label=self.txt['apply_button'], command=self.apply_stocked_names, height=40, backgroundColor=(0.5, 0.8, 0.6))
+        cmds.separator(style='in')
+        self.stock_search_field = cmds.textFieldGrp(label=self.txt['search_string'], columnWidth2=(100, 240))
+        self.stock_replace_field = cmds.textFieldGrp(label=self.txt['replace_string'], columnWidth2=(100, 240))
+        cmds.button(label=self.txt['replace_in_list_button'], command=self.replace_in_stock_list)
+        cmds.separator(style='in')
+        self.prefix_field = cmds.textFieldGrp(label=self.txt['add_prefix_label'], columnWidth2=(100, 240))
+        self.suffix_field = cmds.textFieldGrp(label=self.txt['add_suffix_label'], columnWidth2=(100, 240))
+        cmds.button(label=self.txt['add_fix_button'], command=self.add_prefix_suffix)
+        cmds.setParent('..'); cmds.setParent('..')
+        
+        cmds.showWindow(self.window)
+        
+    def change_language(self, lang_item):
+        lang = 'ja' if lang_item == "日本語 (Japanese)" else 'en'
+        cmds.optionVar(sv=('riggingToolLanguage', lang)) # 言語設定を保存
+        AdvancedRiggingToolUI(lang=lang)
+
+    def _update_stock_list_display(self):
+        display_text = []
+        for original_path, new_name in self.stocked_objects:
+            original_short_name = original_path.split('|')[-1]
+            display_text.append(f"{original_short_name} -> {new_name}")
+        cmds.scrollField(self.stock_list_field, edit=True, text='\n'.join(display_text))
+
+    def load_selection_to_stock(self, *args):
+        new_selection = cmds.ls(selection=True, long=True)
+        if not new_selection: return
+        existing_paths = {item[0] for item in self.stocked_objects}
+        for path in new_selection:
+            if path not in existing_paths:
+                self.stocked_objects.append([path, path.split('|')[-1]])
+        self._update_stock_list_display()
+
+    def clear_stock_list(self, *args):
+        self.stocked_objects = []
+        cmds.scrollField(self.stock_list_field, edit=True, clear=True)
+
+    def replace_in_stock_list(self, *args):
+        search_str = cmds.textFieldGrp(self.stock_search_field, q=True, text=True)
+        if not search_str: return
+        replace_str = cmds.textFieldGrp(self.stock_replace_field, q=True, text=True)
+        for i in range(len(self.stocked_objects)):
+            self.stocked_objects[i][1] = self.stocked_objects[i][1].replace(search_str, replace_str)
+        self._update_stock_list_display()
+
+    def add_prefix_suffix(self, *args):
+        prefix = cmds.textFieldGrp(self.prefix_field, q=True, text=True)
+        suffix = cmds.textFieldGrp(self.suffix_field, q=True, text=True)
+        if not prefix and not suffix: return
+        for i in range(len(self.stocked_objects)):
+            self.stocked_objects[i][1] = f"{prefix}{self.stocked_objects[i][1]}{suffix}"
+        self._update_stock_list_display()
+
+    def apply_stocked_names(self, *args):
+        current_text = cmds.scrollField(self.stock_list_field, q=True, text=True)
+        lines = [line for line in current_text.split('\n') if line]
+        if not self.stocked_objects or len(self.stocked_objects) != len(lines): return
+        new_names = [line.split(' -> ')[1] for line in lines if ' -> ' in line]
+        for i in range(len(self.stocked_objects)): self.stocked_objects[i][1] = new_names[i]
+        for i in reversed(range(len(self.stocked_objects))):
+            original_path, new_name = self.stocked_objects[i]
+            try:
+                if cmds.objExists(original_path) and original_path.split('|')[-1] != new_name:
+                    cmds.rename(original_path, new_name)
+            except Exception as e: print(f"Error renaming {original_path}: {e}")
+        self.clear_stock_list()
+
+    def apply_preset(self, preset_label):
+        presets = {"L_  ->  R_": ("L_", "R_"), "R_  ->  L_": ("R_", "L_"), "l_  ->  r_": ("l_", "r_"), "r_  ->  l_": ("r_", "l_"), "Left_  ->  Right_": ("Left_", "Right_"), "Right_  ->  Left_": ("Right_", "Left_")}
+        if preset_label in presets:
+            search, replace = presets[preset_label]
+            cmds.textFieldButtonGrp(self.search_field, edit=True, text=search)
+            cmds.textFieldGrp(self.replace_field, edit=True, text=replace)
+        cmds.optionMenu(self.preset_menu, edit=True, select=1)
+
+    def get_prefix_from_selection(self, *args):
+        selected = cmds.ls(selection=True)
+        if not selected: return
+        obj_name = selected[0].split('|')[-1]
+        match = re.match(r'(.*?)(\d+)$', obj_name)
+        prefix = match.group(1) if match else (obj_name.rsplit('_', 1)[0] + '_' if '_' in obj_name else obj_name)
+        cmds.textFieldButtonGrp(self.search_field, edit=True, text=prefix)
+
+    def save_settings(self, *args):
+        search_val = cmds.textFieldButtonGrp(self.search_field, q=True, text=True); replace_val = cmds.textFieldGrp(self.replace_field, q=True, text=True)
+        plane_val = cmds.radioButtonGrp(self.plane_radio, q=True, select=True); behavior_val = cmds.checkBox(self.behavior_check, q=True, value=True)
+        cmds.optionVar(sv=(self.opt_var_keys['search'], search_val)); cmds.optionVar(sv=(self.opt_var_keys['replace'], replace_val)); cmds.optionVar(iv=(self.opt_var_keys['plane'], plane_val)); cmds.optionVar(iv=(self.opt_var_keys['behavior'], behavior_val))
+
+    def select_roots_by_prefix(self, *args):
+        prefix = cmds.textFieldButtonGrp(self.search_field, q=True, text=True)
+        if not prefix: return
+        root_joints = [j for j in cmds.ls(type='joint') if not cmds.listRelatives(j, parent=True, type='joint') and j.startswith(prefix)]
+        if root_joints: cmds.select(root_joints, replace=True)
+
+    def apply_mirror(self, *args):
+        self.save_settings()
+        search_for = cmds.textFieldButtonGrp(self.search_field, q=True, text=True); replace_with = cmds.textFieldGrp(self.replace_field, q=True, text=True)
+        plane_selection = cmds.radioButtonGrp(self.plane_radio, q=True, select=True); mirror_behavior_val = cmds.checkBox(self.behavior_check, q=True, value=True)
+        mirror_args = {'mirrorYZ': plane_selection == 1, 'mirrorXZ': plane_selection == 2, 'mirrorXY': plane_selection == 3, 'mirrorBehavior': mirror_behavior_val, 'searchReplace': (search_for, replace_with)}
+        selected_joints = cmds.ls(selection=True, type='joint')
+        if not selected_joints: return
+        for joint in selected_joints:
+            try: cmds.mirrorJoint(joint, **mirror_args)
+            except Exception as e: print(f"Error mirroring {joint}: {e}")
+
+    def sequential_rename(self, *args):
+        selected = cmds.ls(selection=True, type='joint')
+        if not selected or len(selected) > 1: return
+        root_joint = selected[0]
+        match = re.match(r'(.*?)(\d+)$', root_joint)
+        if not match: return
+        prefix, number_str = match.groups(); start_number = int(number_str); padding = len(number_str)
+        joints_in_order = []; queue = [root_joint]; processed = set()
+        while queue:
+            current = queue.pop(0)
+            if current in processed: continue
+            joints_in_order.append(current); processed.add(current)
+            children = cmds.listRelatives(current, children=True, type='joint') or []; children.sort(); queue.extend(children)
+        target_names = [f"{prefix}{str(start_number + i).zfill(padding)}" for i in range(len(joints_in_order))]
+        conflicts = [obj for name in target_names for obj in cmds.ls(name, long=True) if obj.split('|')[-1] not in joints_in_order]
+        if conflicts:
+            error_message = self.txt.get('conflict_error_message', "Name conflict detected.") + "\n\n" + "\n".join(f"- {c}" for c in sorted(list(set(conflicts))))
+            cmds.confirmDialog(title=self.txt.get('conflict_error_title', "Name Conflict"), message=error_message, button=['OK'], icon='critical'); return
+        temp_names = [cmds.rename(j, j + "_temp_rename_") for j in joints_in_order]
+        for i, temp_name in enumerate(temp_names): cmds.rename(temp_name, target_names[i])
+
+# --- ツールの起動 ---
+saved_lang = 'ja'
+if cmds.optionVar(exists='riggingToolLanguage'):
+    saved_lang = cmds.optionVar(q='riggingToolLanguage')
+AdvancedRiggingToolUI(lang=saved_lang)
